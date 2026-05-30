@@ -1,447 +1,475 @@
-派聪明（KnowFlow）是一个企业级的 AI 知识库管理系统，采用检索增强生成（RAG）技术，提供智能文档处理和检索能力。
+# KnowFlow 项目介绍
 
-核心技术栈包括 ElasticSearch、Kafka、WebSocket、Spring Security、Docker、MySQL 和 Redis。
+## 1. 项目概述
 
-它的目标是帮助企业和个人更高效地管理和利用知识库中的信息，支持多租户架构，允许用户通过自然语言查询知识库，并获得基于自身文档的 AI 生成响应。
+KnowFlow 是一个面向企业和个人资料管理的 AI 知识库系统。它解决的不是“做一个聊天框”这么简单的问题，而是把分散在 PDF、Word、TXT 和内部资料中的文档，整理成一个可检索、可问答、可按权限访问的知识库。
 
-![派聪明多模块架构](https://cdn.tobebetterjavaer.com/stutymore/README-20250730102133.png)
+项目的核心链路是 RAG，也就是先从知识库中检索相关资料，再让大模型基于这些资料生成回答。用户上传文档后，系统会完成文件存储、文本解析、内容切块、Embedding 向量化和 Elasticsearch 索引写入；用户提问时，后端先召回相关片段，再把片段和问题一起交给大模型生成回答。这样既能降低大模型“自由发挥”的概率，也能让用户回到原始资料中核对来源。
 
-系统允许用户：
+我在这个项目中更关注的是“怎么把 AI 能力放进一个真正可运行的业务系统里”。因此，除了 RAG 主链路，我还围绕文档管理、权限隔离、异步任务、流式问答、用量控制、充值计费和后台管理做了比较完整的工程化设计。这个过程给我的感受很强烈：AI 项目最迷人的地方不是模型本身，而是当它和权限、文件、搜索、缓存、消息队列、成本控制这些现实问题撞在一起时，整个系统突然变得又复杂又有生命力。
 
-- 上传和管理各种类型的文档
-- 自动处理和索引文档内容
-- 使用自然语言查询知识库
-- 接收基于自身文档的 AI 生成响应
+## 2. 项目定位
 
-用到的技术栈包括，先说后端的：
+KnowFlow 可以看作一个企业级 RAG 知识库平台，主要处理下面几类问题：
 
-+ 框架 : Spring Boot 3.4.2 (Java 17)
-+ 数据库 : MySQL 8.0
-+ ORM : Spring Data JPA
-+ 缓存 : Redis
-+ 搜索引擎 : Elasticsearch 8.10.0
-+ 消息队列 : Apache Kafka
-+ 文件存储 : MinIO
-+ 文档解析 : Apache Tika
-+ 安全认证 : Spring Security + JWT
-+ AI集成 : DeepSeek API/本地 Ollama+豆包 Embedding
-+ 实时通信 : WebSocket
-+ 依赖管理 : Maven
-+ 响应式编程 : WebFlux
+- 企业内部文档数量多、格式杂，传统目录和关键词搜索效率不高。
+- 大模型无法直接读取企业私有资料，容易生成过时或不准确的回答。
+- 不同部门、团队和用户之间，需要清楚地隔离文档访问权限。
+- 大文件上传、解析、向量化、写索引都比较耗时，不能一直占用 HTTP 请求。
+- AI 调用有成本，需要配合额度、用量统计、限流和充值体系。
 
-后端的整体项目结构：
+适用场景包括企业知识问答、内部文档检索、技术资料助手、课程资料问答、面试资料库、客服知识库等。相比单纯的 Demo，KnowFlow 更像一个把 AI 能力接入真实业务系统的练兵场。
 
-```bash
-src/main/java/com/yizhaoqi/knowflow/
-├── KnowFlowApplication.java      # 主应用程序入口
-├── client/                       # 外部API客户端
-├── config/                       # 配置类
-├── consumer/                     # Kafka消费者
-├── controller/                   # REST API端点
-├── entity/                       # 数据实体
-├── exception/                    # 自定义异常
-├── handler/                      # WebSocket处理器
-├── model/                        # 领域模型
-├── repository/                   # 数据访问层
-├── service/                      # 业务逻辑
-└── utils/                        # 工具类
+## 3. 我的主要工作
+
+在项目中，我主要参与后端核心模块的设计与实现，并围绕 RAG 主链路做了多轮优化。我的工作可以概括为以下几个方向：
+
+- 设计知识库文档处理流程，包括文件分片上传、断点续传、文件合并、文档解析、文本切块、向量化和索引写入。
+- 使用 Kafka 拆分耗时任务，把文档解析、Embedding 调用和 Elasticsearch 写入从用户请求中解耦出来。
+- 设计基于用户、角色、组织标签和文档属性的权限过滤逻辑，保证检索阶段就完成访问控制。
+- 实现混合检索链路，将关键词检索和向量检索结合，用于提高 RAG 问答的召回质量。
+- 参与 WebSocket 流式聊天链路，让用户可以边等待边看到大模型输出结果。
+- 完善用户认证、管理后台、用量统计、限流、充值订单和模型供应商配置等业务模块。
+- 梳理异步任务状态、失败重试和最终一致性问题，减少文档处理过程中的“半成功”状态。
+
+这个项目让我明显意识到，后端开发并不是把接口写通就结束了。真正麻烦的地方往往出现在链路很长、组件很多、失败情况特别碎的时候：文件已经上传成功但消息投递失败怎么办？向量化成功但 ES 写入失败怎么办？用户刚好没有权限但检索结果已经被送进大模型怎么办？这些问题看起来不酷，但它们才是系统能不能站得住的关键。
+
+## 4. 技术栈
+
+### 4.1 后端技术栈
+
+| 类型 | 技术 |
+| --- | --- |
+| 开发语言 | Java 17 |
+| 后端框架 | Spring Boot 3.4.2 |
+| Web 框架 | Spring MVC、WebFlux |
+| 安全认证 | Spring Security、JWT |
+| ORM | Spring Data JPA |
+| 数据库 | MySQL 8.0 |
+| 缓存 | Redis |
+| 搜索引擎 | Elasticsearch 8.10.0 |
+| 消息队列 | Apache Kafka |
+| 文件存储 | MinIO |
+| 文档解析 | Apache Tika |
+| 实时通信 | WebSocket |
+| AI 接入 | DeepSeek API、本地 Ollama、Embedding 模型 |
+| 构建工具 | Maven |
+| 部署支持 | Docker、Nginx、Shell 脚本 |
+
+### 4.2 前端技术栈
+
+| 类型 | 技术 |
+| --- | --- |
+| 前端框架 | Vue 3 |
+| 开发语言 | TypeScript |
+| 构建工具 | Vite |
+| UI 组件库 | Naive UI |
+| 状态管理 | Pinia |
+| 路由 | Vue Router、Elegant Router |
+| 样式方案 | UnoCSS、SCSS |
+| 图标 | Iconify |
+| 包管理 | pnpm |
+
+### 4.3 中间件职责
+
+| 中间件 | 在项目中的作用 |
+| --- | --- |
+| MySQL | 保存用户、角色、文档、会话、订单、用量、配置等业务数据 |
+| Redis | 缓存 Token、上传分片状态、组织标签、限流计数和会话状态 |
+| Elasticsearch | 保存文档文本块、向量和元数据，支撑关键词检索与语义检索 |
+| Kafka | 承接文件解析、向量化、索引写入等异步任务 |
+| MinIO | 保存用户上传的原始文件、预览文件和迁移文件 |
+
+## 5. 总体架构设计
+
+KnowFlow 采用前后端分离架构。前端负责页面交互、状态展示和聊天体验；后端负责认证授权、业务处理、文档处理、AI 调用编排和数据持久化。后端代码按 `controller`、`service`、`repository`、`model`、`config`、`consumer` 等包拆分，整体上是典型的 Spring Boot 分层结构。
+
+```mermaid
+flowchart LR
+    User["用户浏览器"] --> Frontend["Vue 3 前端"]
+    Frontend --> API["Spring Boot REST API"]
+    Frontend --> WS["WebSocket 聊天通道"]
+
+    API --> Security["Spring Security + JWT"]
+    API --> UserModule["用户与权限模块"]
+    API --> UploadModule["上传与文档模块"]
+    API --> AdminModule["管理后台模块"]
+    API --> RechargeModule["充值与用量模块"]
+
+    UploadModule --> MinIO["MinIO 文件存储"]
+    UploadModule --> Kafka["Kafka 异步任务"]
+    Kafka --> Parser["文档解析与切块"]
+    Parser --> Embedding["Embedding 向量化"]
+    Embedding --> ES["Elasticsearch 向量与文本索引"]
+
+    WS --> ChatModule["聊天编排模块"]
+    ChatModule --> Search["混合检索服务"]
+    Search --> ES
+    ChatModule --> LLM["大模型服务"]
+    ChatModule --> MySQL["MySQL"]
+
+    UserModule --> MySQL
+    AdminModule --> MySQL
+    RechargeModule --> MySQL
+    API --> Redis["Redis 缓存与限流"]
 ```
 
-再说前端的，包括：
+我对这个架构的理解是：前端不只是展示结果，后端也不只是转发请求。真正的核心在于后端要把“文件系统、搜索系统、AI 服务、权限系统、业务数据”协调起来，让用户看到的是一个稳定的知识库，而不是一堆分散组件临时拼出来的效果。
 
-+ 框架 : Vue 3 + TypeScript
-+ 构建工具 : Vite
-+ UI组件 : Naive UI
-+ 状态管理 : Pinia
-+ 路由 : Vue Router
-+ 样式 : UnoCSS + SCSS
-+ 图标 : Iconify
-+ 包管理 : pnpm
+## 6. 核心业务流程
 
-前端的整体项目结构：
+### 6.1 文档入库流程
 
-```bash
-frontend/
-├── packages/           # 可重用模块
-├── public/             # 静态资源
-├── src/                # 主应用程序代码
-│   ├── assets/         # SVG图标，图片
-│   ├── components/     # Vue组件
-│   ├── layouts/        # 页面布局
-│   ├── router/         # 路由配置
-│   ├── service/        # API集成
-│   ├── store/          # 状态管理
-│   ├── views/          # 页面组件
-│   └── ...            # 其他工具和配置
-└── ...               # 构建配置文件
+文档入库是整个 RAG 链路的入口。一个文件从上传到可检索，大致会经历下面这些步骤：
+
+```mermaid
+sequenceDiagram
+    participant U as 用户
+    participant F as 前端
+    participant A as 后端 API
+    participant R as Redis
+    participant M as MinIO
+    participant K as Kafka
+    participant P as 解析消费者
+    participant E as Elasticsearch
+    participant DB as MySQL
+
+    U->>F: 选择文件
+    F->>A: 分片上传
+    A->>M: 保存分片
+    A->>R: 记录分片状态
+    F->>A: 请求合并文件
+    A->>M: 合并并保存原始文件
+    A->>DB: 写入文件与任务记录
+    A->>K: 投递解析任务
+    K->>P: 消费任务
+    P->>M: 读取文件
+    P->>P: Apache Tika 解析文本
+    P->>P: 文本切块
+    P->>P: 调用 Embedding 模型
+    P->>E: 写入文本块和向量索引
+    P->>DB: 更新处理状态
 ```
 
-## 派聪明的成绩
+一开始我最直观的想法是“上传后直接解析”，但真正梳理后发现这会让接口非常脆弱。大文件解析、向量化、索引写入都可能慢，而且任何一步失败都会拖住用户请求。后面我把上传和解析拆成两段：上传接口只负责接收、合并和创建任务，耗时逻辑交给 Kafka 消费者异步处理。这样前端能更快拿到响应，也能通过任务状态展示处理进度。
 
-派聪明是 9 月份上线的，截止到目前，已经取得了非常瞩目的成绩，我这里晒一下哈。
+### 6.2 AI 问答流程
 
+用户提问后，系统会先检索知识库，再组织上下文调用大模型：
 
-![面渣逆袭+派聪明 拿下招银网络+科大讯飞](https://cdn.tobebetterjavaer.com/paicoding/fb5db62ab92092e2d74a4916b6a45710.png)
-
-
-![派聪明拿到的日常实习](https://cdn.tobebetterjavaer.com/paicoding/da01a535b091c5ebeed70bf9a08a90c6.png)
-
-
-![派聪明拿下合合信息](https://cdn.tobebetterjavaer.com/paicoding/3518a76f439c325de8df763482cbebc4.png)
-
-
-![派聪明拿下小红书](https://cdn.tobebetterjavaer.com/paicoding/7bed4d34460749d68db9c0fcbc4621a8.png)
-
-
-![派聪明拿下网易](https://cdn.tobebetterjavaer.com/paicoding/5f227edcb38ffe41aea8fc0880f64cad.png)
-
-说句真心话，看到这，就可以无脑冲这个项目了，因为这些，还只是冰山一角。扫下面的优惠券（或者长按自动识别）解锁派聪明源码和教程吧，[星球](https://javabetter.cn/zhishixingqiu/)目前定价 159 元/年，优惠完只需要 129 元，每天不到 0.35 元，绝对的超值。
-
-![派聪明优惠券](https://cdn.tobebetterjavaer.com/paicoding/97601d7a337d7d944b02bb4a79cd6430.png)
-
->派聪明如何写到简历上：[https://paicoding.com/column/10/2](https://paicoding.com/column/10/2)
-
-
-
-## 核心功能
-
-这里我先带大家了解一下什么是派聪明，我为什么要做派聪明这个企业级的 RAG 知识库？派聪明这个 AI 项目能让大家学到什么？以及如何解锁派聪明的源码仓库和教程？
-
-![派聪明的聊天助手：会依据知识库进行问答](https://cdn.tobebetterjavaer.com/paicoding/2550c873a349d8bee29d46400f12ce76.png)
-
-![派聪明的架构概览](https://cdn.tobebetterjavaer.com/stutymore/README-20250730101618.png)
-
-### 知识库管理
-
-派聪明提供了完整的文档上传与解析功能，支持文件分片上传和断点续传，并支持标签进行组织管理。文档可以是公开的，也可以是私有的，并且可以与特定的组织标签关联，以便更好地进行权限分类。
-
-![派聪明文档处理](https://cdn.tobebetterjavaer.com/stutymore/README-20250730102808.png)
-
-### AI驱动的RAG实现
-
-派聪明的核心是 RAG 实现：
-
-![派聪明聊天交互](https://cdn.tobebetterjavaer.com/stutymore/README-20250730102837.png)
-
-- 将上传的文档进行语义分块
-- 调用豆包 Embedding 模型为每个文本块生成高维向量
-- 将向量存储到 ElasticSearch 以支持语义搜索和关键词搜索
-- 可以根据用户的查询检索相关文档
-- 为 LLM 提供完整的上下文，从而生成更准确、基于文档的响应内容
-
-### 企业级多租户
-
-派聪明通过组织标签支持多租户架构。每个用户可以创建或加入一个或多个组织，每个组织可以拥有独立的知识库和文档管理。这样，企业可以在同一系统中管理多个团队或部门的知识库，而无需担心数据混淆或权限问题。
-
-![派聪明的安全架构](https://cdn.tobebetterjavaer.com/stutymore/README-20250730103118.png)
-
-### 实时通信
-
-系统采用 WebSocket 技术，提供用户与 AI 系统之间的实时交互，支持响应式聊天界面，便于知识检索和 AI 互动。
-
-## 前置环境
-
-在开始之前，请确保已安装以下软件：
-
-- Java 17
-- Maven 3.8.6 或更高版本
-- Node.js 18.20.0 或更高版本
-- pnpm 8.7.0 或更高版本
-- MySQL 8.0
-- Elasticsearch 8.10.0
-- MinIO 8.5.12
-- Kafka 3.2.1
-- Redis 7.0.11
-- Docker（可选，用于运行 Redis、MinIO、Elasticsearch 和 Kafka 等服务）
-
-## 架构设计
-
-派聪明的架构具备一个现代化的、云原生应用程序的特点，具有清晰的关注点分离、可扩展的组件和与 AI 技术的集成。模块化设计允许随着技术的发展，特别是快速变化的 AI 集成领域，未来可以扩展和替换单个组件。
-
-![派聪明的系统概述](https://cdn.tobebetterjavaer.com/stutymore/README-20250730102655.png)
-
-控制层用于处理 HTTP 请求，验证输入，管理请求/响应格式化，并将业务逻辑委托给服务层。控制器按领域功能组织。遵循 RESTful 设计原则，集成了性能监控和日志记录，用于跟踪 API 使用和故障排除。
-
-```java
-@RestController
-@RequestMapping("/api/v1/documents")
-public class DocumentController {
-    @Autowired
-    private DocumentService documentService;
-    
-    @DeleteMapping("/{fileMd5}")
-    public ResponseEntity<?> deleteDocument(
-            @PathVariable String fileMd5,
-            @RequestAttribute("userId") String userId,
-            @RequestAttribute("role") String role) {
-        // 参数验证和委托给服务
-        documentService.deleteDocument(fileMd5);
-        // 响应处理
-    }
-}
+```mermaid
+flowchart TD
+    Q["用户输入问题"] --> Auth["校验用户身份与组织权限"]
+    Auth --> Rewrite["构造检索请求"]
+    Rewrite --> Hybrid["Elasticsearch 混合检索"]
+    Hybrid --> Filter["按公开状态、用户、组织标签过滤"]
+    Filter --> Context["组装知识上下文"]
+    Context --> Prompt["构造 Prompt"]
+    Prompt --> LLM["调用大模型"]
+    LLM --> Stream["WebSocket 流式返回"]
+    Stream --> Save["保存会话与消息记录"]
 ```
 
-服务层主要用来处理应用的业务逻辑，具有事务感知能力，能够处理跨越多个数据源的操作。
-
-```java
-@Service
-public class DocumentService {
-    @Autowired
-    private FileUploadRepository fileUploadRepository;
-    
-    @Autowired
-    private MinioClient minioClient;
-    
-    @Autowired
-    private ElasticsearchService elasticsearchService;
-    
-    @Transactional
-    public void deleteDocument(String fileMd5) {
-        // 文档删除的业务逻辑
-        // 协调多个仓储和系统
-    }
-}
-```
+这条链路的重点是检索质量和权限过滤。检索结果越贴近问题，大模型越容易回答到点上；权限过滤越靠前，越能避免把用户无权访问的文档送进模型上下文。做这一块时我的感受非常强烈：RAG 不是“把资料塞给模型”这么轻松，召回错了，模型会一本正经地错；权限错了，那就不是效果问题，而是安全事故。
 
-数据访问层使用 Spring Data JPA 进行数据库操作，提供了对 MySQL 的 CRUD 操作。
+### 6.3 权限控制流程
 
-```java
-@Repository
-public interface FileUploadRepository extends JpaRepository<FileUpload, Long> {
-    Optional<FileUpload> findByFileMd5(String fileMd5);
-    
-    @Query("SELECT f FROM FileUpload f WHERE f.userId = :userId OR f.isPublic = true OR (f.orgTag IN :orgTagList AND f.isPublic = false)")
-    List<FileUpload> findAccessibleFilesWithTags(@Param("userId") String userId, @Param("orgTagList") List<String> orgTagList);
-}
-```
+KnowFlow 通过用户身份、角色、组织标签和文档属性一起控制访问范围：
 
-实体层由映射到数据库表的 JPA 实体以及用于 API 请求和响应的 DTO（数据传输对象）组成。
+- 登录后签发 JWT，后续接口通过 Token 识别用户。
+- 管理员接口按角色限制访问。
+- 文档可以属于某个用户、某些组织标签，也可以设为公开。
+- 普通用户查询知识库时，只能看到自己上传的文档、公开文档，以及自己组织标签范围内的文档。
+- 管理员可以管理用户、组织标签、模型配置、邀请码、充值套餐和系统数据。
 
-```java
-@Entity
-public class FileUpload {
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
-    
-    private String fileMd5;
-    private String fileName;
-    private String userId;
-    private boolean isPublic;
-    private String orgTag;
-    // 其他字段和方法
-}
-```
+这里我没有把权限控制只放在页面展示层，而是尽量前移到后端查询和 ES 检索阶段。尤其在 RAG 场景中，如果无权文档已经进入 Prompt，即使最终页面不展示引用，也已经存在泄露风险。
 
-## 环境变量与新的启动方式
+## 7. 功能模块说明
 
-现在本地开发建议按“准备 `.env` -> 启基础服务 -> 启后端 -> 启前端”的顺序启动，不再需要把一堆环境变量手动 export 到终端。
+### 7.1 用户认证与账户体系
 
-### 1. 准备项目根目录 `.env`
+系统提供注册、登录、刷新 Token、退出登录、退出全部设备等能力。认证基于 Spring Security 和 JWT，适合前后端分离项目。用户登录后，后端签发 Token，前端后续请求携带 Token，后端过滤器校验身份并把用户信息放入安全上下文。
 
-项目根目录的 `.env` 用于保存后端本地运行和部署相关配置。首次使用时先复制模板：
+这一块还包括个人信息查询、用户组织标签查询、主组织切换、用户用量查询和 Token 使用记录查询。它们看起来不算复杂，但后面的权限控制和用量计费都依赖这些基础数据。
 
-```bash
-cp .env.example .env
-```
+### 7.2 知识库与文档管理
 
-后端启动时会通过 `DotenvEnvironmentPostProcessor` 自动读取项目根目录 `.env`，所以无论是 IDE 直接运行 `KnowFlowApplication`，还是在项目根目录执行 `mvn spring-boot:run`，都会优先使用这里的配置。
+知识库模块是项目里最核心的一块，负责文档上传、列表查询、删除、下载、预览、重建索引、向量化重试和引用详情查看。
 
-`.env` 里当前主要有三类配置：
+主要能力包括：
 
-- 应用运行配置：MySQL、Redis、Kafka、MinIO、Elasticsearch、JWT、AI Provider 等
-- 初始化与安全配置：如 `ADMIN_BOOTSTRAP_*`、`APP_AUTH_REGISTRATION_MODE`、`SECURITY_ALLOWED_ORIGINS`
-- 前端部署配置：如 `DEPLOY_SERVER_HOST`、`DEPLOY_SERVER_USER`、`DEPLOY_SERVER_KEY`、`DEPLOY_TARGET_DIR`、`DEPLOY_HEALTHCHECK_URL`
+- 大文件分片上传。
+- 上传状态查询和断点续传。
+- 文件合并与元数据入库。
+- 文件类型校验。
+- 文档列表查询。
+- 可访问文档过滤。
+- 文档预览和分页预览。
+- 文档下载和按 MD5 下载。
+- 删除文档及关联数据。
+- 重新索引和向量化失败重试。
 
-几个关键项建议优先确认：
+这个模块同时涉及 MySQL、Redis、MinIO、Kafka 和 Elasticsearch。我的优化重点不是简单把功能写出来，而是处理失败后的状态恢复、跨组件数据对齐，以及让用户看到可信的处理状态。
 
-- `SPRING_PROFILES_ACTIVE=dev`：本地源码启动默认使用 `dev`
-- `SPRING_DATASOURCE_*`、`SPRING_DATA_REDIS_*`：数据库和 Redis 连接
-- `SPRING_KAFKA_BOOTSTRAP_SERVERS`、`MINIO_*`、`ELASTICSEARCH_*`：基础依赖地址
-- `JWT_SECRET_KEY`：必须是 Base64 字符串，可用 `openssl rand -base64 32` 生成
-- `ADMIN_BOOTSTRAP_ENABLED`：仅首次创建管理员时临时改为 `true`，创建完成后改回 `false`
+### 7.3 文档解析与向量化
 
-说明：
+文档解析由 Apache Tika 完成，用来从 PDF、Word、TXT 等文件中提取纯文本。解析后的文本会被切成多个相对完整的文本块，再调用 Embedding 模型转成向量，最后写入 Elasticsearch。
 
-- `.env` 是后端和部署脚本共用的根配置
-- 前端自己的 Vite 变量仍放在 `frontend/.env`、`frontend/.env.test`、`frontend/.env.prod`
-- `pnpm run dev` 实际使用的是 `vite --mode test`，默认会读取 `frontend/.env.test`
+向量化通常比较耗时，所以项目通过 Kafka 消费者异步执行。这样上传接口能更快返回，大文件处理不会阻塞用户请求；失败任务也可以记录状态并重试。后续如果处理量变大，还可以增加消费者实例来提升吞吐。
 
-### 2. 启动本地基础服务
+### 7.4 混合检索
 
-`infra.sh` 是现在推荐的本地基础设施启动入口，用来统一管理 `minio`、`kafka`、`elasticsearch`。
+系统提供 `/api/v1/search/hybrid` 接口，把关键词检索和向量检索结合起来。
 
-### `infra.sh`
+关键词检索适合精确词、专有名词、编号、标题等内容；向量检索适合表达方式不同但语义相近的问题。两者一起使用，可以提高召回率和结果相关性。检索时还会叠加权限过滤，保证用户只能召回自己有权访问的文档。
 
-用于在本机启动、停止和查看基础依赖服务，目前支持 `minio`、`kafka`、`elasticsearch`。
+在 RAG 问答里，检索质量会直接影响最终回答。如果召回内容本身就不相关，大模型很容易顺着错误上下文生成偏离业务资料的答案。这个地方给我的震撼很大：模型看起来聪明，但它非常相信你喂给它的上下文，哪怕那段上下文是错的。
 
-```bash
-# 启动全部基础服务
-./infra.sh start
+### 7.5 AI 聊天与会话管理
 
-# 启动指定服务
-./infra.sh start minio kafka
+聊天模块通过 WebSocket 实现流式对话。用户输入问题后，后端完成检索、Prompt 构造、大模型调用、结果流式返回和会话保存。
 
-# 查看状态
-./infra.sh status
+核心能力包括：
 
-# 查看某个服务日志
-./infra.sh logs elasticsearch
+- 获取 WebSocket 短期连接 Token。
+- 查询生成任务状态。
+- 查询当前活跃生成任务。
+- 提交回答反馈。
+- 创建、切换、归档和恢复会话。
+- 查询历史对话。
 
-# 输出本地访问地址
-./infra.sh urls
-```
+WebSocket 的好处是用户可以边等边看结果，不必等大模型一次性生成完。服务端也能维护生成状态，用来处理断线重连、停止生成和异常恢复。
 
-如果只想启动部分依赖，也可以按服务名传参：
+### 7.6 组织标签与多租户权限
 
-```bash
-./infra.sh start minio kafka
-```
+组织标签用于实现轻量级多租户和权限隔离。管理员可以创建组织标签、维护标签树、更新标签信息、删除标签，并给用户分配组织标签。
 
-### 3. 启动后端
+在知识库场景里，这个设计很实用。不同部门可以共用同一套系统，但文档不能随便互通。比如研发部、产品部、人事部都在系统里维护资料，普通用户只能访问自己所属组织范围内的私有文档。通过组织标签，可以不用拆成多套部署，也能做到基本的权限隔离。
 
-基础服务就绪后，在项目根目录启动 Spring Boot：
+### 7.7 管理后台
 
-```bash
-mvn spring-boot:run
-```
+管理后台主要服务于系统运营和配置，包含这些能力：
 
-也可以直接在 IDE 中运行 `src/main/java/com/yizhaoqi/knowflow/KnowFlowApplication.java`，效果一样，都会自动读取根目录 `.env`。
+- 用户列表、用户创建和管理员创建。
+- 用户组织标签分配。
+- 知识库新增和删除。
+- 系统状态和用户活动查看。
+- 用量总览和限流配置。
+- 模型供应商配置查看、更新和测试。
+- 邀请码创建、查询、更新和删除。
+- 组织标签树维护。
+- MinIO 文件迁移。
+- 清空系统数据。
+- 充值套餐管理。
 
-### 4. 启动前端
+这些功能让 KnowFlow 更接近一个能落地运行的系统，而不是只展示 RAG 流程的 Demo。
 
-```bash
-cd frontend
-pnpm install
-pnpm run dev
-```
+### 7.8 用量统计、额度与限流
 
-前端开发默认访问 `http://localhost:8081/api/v1`，对应配置在 `frontend/.env.test`。
+AI 模型调用通常有成本，所以系统设计了用量和额度相关能力。用户可以查看自己的使用情况，管理员可以看整体用量。限流配置可以按请求频率、Token 消耗或每日额度来控制调用。
 
-### 5. 服务器脚本启动
+这里需要特别注意并发扣减。例如多个请求同时消耗同一个用户额度时，要避免超扣、少扣或重复扣减。常见做法包括数据库条件更新、乐观锁、Redis Lua 脚本等，核心都是保证扣减动作具备原子性。
 
-如果是服务器上用 jar 包方式运行，可以参考根目录的 `launch.sh.example`。建议先复制成你自己的启动脚本，再按需调整 JDK、Maven 和 jar 名称。脚本支持先加载指定 `.env`，再执行 `start`、`restart`、`stop`、`status`、`logs` 等命令。
+### 7.9 充值与支付
 
-```bash
-cp launch.sh.example launch.sh
-chmod +x launch.sh
+充值模块提供套餐查询、创建订单、支付回调、订单列表和订单详情等功能。管理员维护充值套餐，用户充值后获得更多使用额度。代码中包含 `WxPayService`，说明项目接入了微信支付相关能力。
 
-# 使用默认 .env 启动
-./launch.sh start
+支付链路更看重一致性和安全性。额度发放不能只看前端页面结果，而要基于服务端收到的支付平台回调，或服务端主动查询到的支付结果。订单状态流转、回调签名、金额校验、重复通知和额度发放幂等，都是这一块必须处理的点。
 
-# 使用指定环境文件启动
-./launch.sh start -e .env.prod
-```
+### 7.10 模型供应商配置
 
-其中：
+项目支持模型供应商配置管理，管理员可以查看、更新并测试不同范围的模型配置。通过 `LlmProviderRouter` 和 `ModelProviderConfigService` 等服务，系统具备一定的模型路由能力。
 
-- `start`：会先 `git pull`，再重新打包并启动
-- `restart`：直接重启现有 jar
-- `status` / `logs`：查看进程状态和日志
+这样做可以降低对单一模型服务的依赖。当 DeepSeek、Ollama 或其他供应商不可用时，系统有机会切换备用配置。对于企业应用来说，配置化也方便区分测试环境、生产环境和不同组织的调用策略。
 
-### 6. 前端部署脚本
+## 8. 优化路径
 
-`deploy-front.sh` 用于构建前端、打 zip 包、上传到服务器，并在远端替换 `/home/www/KnowFlow-Front/dist`。脚本会自动读取根目录 `.env` 中的部署配置。
+这个项目的优化不是一次性完成的，而是随着问题暴露逐步推进的。我的思路大致分为四个阶段：
 
-```bash
-# 直接构建并部署前端
-./deploy-front.sh
-```
+### 8.1 第一阶段：先跑通主链路
 
-部署脚本默认会执行这些步骤：
+最开始的目标是把“文档上传到 AI 问答”这条链路跑通。这个阶段关注的是端到端闭环：
 
-- 进入 `frontend` 执行 `pnpm build`
-- 打包 `dist` 为 zip 文件并上传到服务器
-- 删除远端旧的 `dist` 目录并解压新包
-- 检查远端 `dist/index.html` 是否存在
-- 请求 `DEPLOY_HEALTHCHECK_URL` 做健康检查
+- 用户可以上传文档。
+- 后端可以解析文本并写入索引。
+- 用户提问时可以召回相关片段。
+- 大模型可以基于片段生成回答。
+- 前端能展示流式输出和会话记录。
 
-如果只想复用已有的前端构建产物，可以在执行时跳过构建：
+这个阶段最有成就感，因为第一次看到系统基于自己上传的文档回答问题时，真的有一种“资料活过来了”的感觉。原本躺在文件夹里的 PDF 突然能对话了，这一刻非常上头。
 
-```bash
-DEPLOY_SKIP_BUILD=1 ./deploy-front.sh
-```
+### 8.2 第二阶段：拆分耗时任务
 
-## 八、解锁派聪明源码+教程
+主链路跑通后，问题很快出现：大文件解析慢，向量化慢，索引写入也慢。如果全部放在同步接口里，体验会非常差。
 
-那这次为了避免盗版，这次的代码仓库采用的是邀请制，加入星球后，在星球第一个置顶帖【球友必看】中获取邀请链接，审核通过后即可查看。
+因此我把文档处理改成异步模式：
 
-![派聪明的源码申请](https://cdn.tobebetterjavaer.com/paicoding/0abd7b441b744b33d48277be776e58cc.png)
+- 上传接口只处理分片接收、合并和任务创建。
+- Kafka 承接解析、向量化、写索引任务。
+- MySQL 记录任务状态，便于前端查询进度。
+- 失败任务保留错误信息，方便后续重试和排查。
 
-派聪明的教程，这次托管在技术派教程上，之前只要在技术派上绑定过星球的成员编号，均可以解锁查看。
+这个阶段让我对“解耦”有了更实际的认识。以前觉得消息队列只是技术栈里一个名词，真正用起来才发现，它解决的是用户体验、系统吞吐和失败隔离的问题。
 
->派聪明教程地址：https://paicoding.com/column/10/1
+### 8.3 第三阶段：补权限、补状态、补一致性
 
-![派聪明教程](https://cdn.tobebetterjavaer.com/paicoding/a157a62358a6b3c2dab478988143271a.png)
+当系统功能越来越多后，真正麻烦的不是新增接口，而是各种边界状态：
 
-并且了照顾大家的阅读习惯，我们也会在星球里第一时间同步。
+- 文档上传成功但解析失败。
+- 向量化成功但 ES 写入失败。
+- 删除文档时 MySQL、MinIO、ES、Redis 状态不一致。
+- 用户组织标签变更后，检索权限需要及时生效。
+- WebSocket 断开后，生成任务需要正确收尾。
 
-![星球付费专栏](https://cdn.tobebetterjavaer.com/paicoding/d2c867d82d57ef1560fed6267eb02590.png)
+这一阶段我重点梳理任务状态、幂等操作和补偿思路。比如用 `PENDING`、`PROCESSING`、`SUCCESS`、`FAILED`、`DELETING` 等状态描述任务生命周期；对可重复执行的操作尽量做幂等处理；对跨系统操作保留日志和失败状态，方便后续修复。
 
+### 8.4 第四阶段：提升检索质量和使用体验
 
-加入[「二哥的编程星球」](https://javabetter.cn/zhishixingqiu/)后，你还可以享受以下专属内容服务：
+RAG 的效果很大程度取决于检索质量。后续优化主要集中在：
 
-- 1、**付费文档:** 派聪明 RAG、[微服务 PmHub](https://laigeoffer.cn/pmhub/learn/)、[前后端分离技术派](https://javabetter.cn/zhishixingqiu/paicoding.html)、轮子 MYDB、入门编程喵、AI+MCP 的校招派等项目配套的 60 万+ 字教程查看权限
-- 2、**简历修改**: 提供价值超 600 元的[简历修改服务](https://javabetter.cn/zhishixingqiu/jianli.html)，附赠星球 5000+优质简历模板可供参考
-- 3、**专属问答**: 向二哥和星球嘉宾发起 1v1 提问，内容不限于 offer 选择、学习路线、职业规划等
-- 4、**面试指南**: 获取针对校招、社招的 40 万+字面试求职攻略《[Java 面试指南](https://javabetter.cn/zhishixingqiu/mianshi.html)》，以及二哥的 LeetCode 刷题笔记、一灰的职场进阶之路、华为 OD 题库
-- 5、**学习环境:** 打造一个沉浸式的学习环境，有一种高考冲刺、大学考研的氛围
+- 调整文本切块策略，避免切得太碎或太长。
+- 保留文档来源、页码、标题等引用信息。
+- 将关键词检索和向量检索结合，提高召回稳定性。
+- 对召回结果做去重和上下文长度控制。
+- 在回答中保留来源信息，方便用户核对。
+- 使用 WebSocket 流式返回，降低等待焦虑。
 
-截止到 2025 年 07 月 31 日，已经有 9000+ 球友加入星球了，很多小伙伴在认真学习项目之后，都成功拿到了心仪的校招或者社招 offer，我就随便举两个例子。
+这个阶段给我的感觉是：RAG 系统的优化有点像调音。每个参数单独看都不惊天动地，但切块、召回、排序、上下文长度、Prompt 组合在一起，就会明显影响最后的回答质量。
 
-![美团快手 TP-LINK 拼多多](https://cdn.tobebetterjavaer.com/stutymore/readme-20250703180225.png)
+## 9. 技术难点与解决思路
 
-![阿里云荣耀字节](https://cdn.tobebetterjavaer.com/stutymore/readme-20250703180738.png)
+### 9.1 大文件分片上传与断点续传
 
+大文件直接上传容易超时，也会增加服务端内存和连接压力。项目采用分片上传：前端按固定大小切割文件，后端保存每个分片，并用 Redis 记录上传状态。断点续传时，前端先查询已完成分片，只补传缺失部分。
 
-目前，派聪明这个项目也收尾了，大家可以放心冲 😊。并且一次购买不需要额外付费，即可获取星球的所有付费资料，帮助你少走弯路，提高学习的效率。直接微信扫下面这个优惠券即可加入。
+需要重点处理的问题包括：
 
-![派聪明优惠券](https://cdn.tobebetterjavaer.com/paicoding/97601d7a337d7d944b02bb4a79cd6430.png)
+- `fileMd5`、`chunkIndex`、`totalChunks` 等分片标识怎么设计。
+- 重复上传同一分片时如何保证幂等。
+- 分片过期和临时文件如何清理。
+- 如何避免恶意上传占满存储。
+- 合并阶段如何校验文件完整性。
 
-> 步骤 ①：微信扫描上方二维码，点击「加入知识星球」按钮
+### 9.2 文档解析质量与文本切块策略
 
-> 步骤 ②：访问星球置顶帖球友必看：[https://t.zsxq.com/11rEo9Pdu](https://t.zsxq.com/11rEo9Pdu)，获取项目的源码和配套教程
+RAG 的效果很大程度取决于文档切块质量。文本块太短会丢上下文，太长又会增加检索噪声和模型输入成本。不同格式的文档解析效果也不一样，比如 PDF 可能有换行混乱、表格错位、扫描件无法提取文本等问题。
 
-加入星球需要多少钱呢？星球目前定价 159 元，限时优惠 30 元，目前只需要 129 元就可以加入。
+需要重点处理的问题包括：
 
-0 人的时候优惠完 69 元，1000 人的时候 79 元，2000 人的时候 89 元，3000 人的时候 99 元，5000 人的时候是 119 元，后面肯定还会继续涨。
+- 如何过滤页眉、页脚、目录等低价值内容。
+- 如何按标题、段落、长度和语义边界切块。
+- `chunk size` 和 `overlap` 怎么设置。
+- 如何保留文档来源、页码、标题等引用信息。
+- 解析失败或空文本文件如何处理。
 
-付费社群我加入了很多，但从未见过比这更低价格，提供更多服务的社群，光派聪明这个项目的就能让你值回票价。
+### 9.3 向量化与 Elasticsearch 索引设计
 
-多说一句，任何时候，技术都是我们程序员的安身立命之本，如果你能认认真真跟完派聪明的源码和教程，相信你的编程功底会提升一大截。
+向量化需要调用外部或本地 Embedding 模型，会遇到耗时、失败、限流和成本问题。写入 Elasticsearch 时，还要设计合适的 mapping，让它同时支持向量检索、关键词检索、权限过滤和引用展示。
 
-再给大家展示一下派聪明教程的部分目录吧，真的是满满的诚意和干货。
+需要重点处理的问题包括：
 
-![派聪明整体设计方案](https://cdn.tobebetterjavaer.com/paicoding/6b670c22740e9e7b3dfae35fd646196e.png)
+- 批量调用 Embedding 模型，提高吞吐。
+- 控制失败重试，避免重复向量化。
+- 设计向量字段维度和相似度算法。
+- 批量写入 ES，并处理部分失败。
+- 重建索引时让旧数据和新数据平滑切换。
 
-![派聪明 prompt](https://cdn.tobebetterjavaer.com/paicoding/1e5e0055300a70a4cb83791f889bec20.png)
+### 9.4 混合检索排序
 
-![派聪明教程目录](https://cdn.tobebetterjavaer.com/stutymore/readme-20250106103555.png)
+混合检索要同时考虑 BM25 关键词分数和向量相似度分数。两种分数的范围和含义不同，不能直接相加。实际排序时，还要考虑文档权限、时间、来源、文档质量和用户组织标签等因素。
 
+需要重点处理的问题包括：
 
-之前就有球友反馈说，“**二哥，你这套教程如果让培训机构来卖，1999 元都算少！**
+- 如何融合 BM25 分数和向量相似度。
+- 如何控制召回数量和上下文长度。
+- 如何过滤无权限文档。
+- 如何避免召回重复或高度相似文本块。
+- 如何把检索结果整理成大模型能理解的上下文。
 
-讲真心话，这个价格也不会持续很久，星球已经 9000 人了，马上 10000 人会迎来一波新的涨价（169 元），所以早买早享受，不要等，想好了就去冲，错过不能说后悔一辈子，但至少会有遗憾。
+### 9.5 WebSocket 流式聊天与断线恢复
 
+AI 生成通常比较慢，WebSocket 可以把生成内容实时推给前端。但长连接也会带来连接管理、心跳、断线、重连、并发发送和资源释放的问题。
 
-![球友们加入星球后的真实反馈](https://cdn.tobebetterjavaer.com/paicoding/0d2b52387576b0884e832c05594fc9de.png)
+需要重点处理的问题包括：
 
-我们的代码，严格按照大厂的标准来，无论是整体的架构，还是具体的细节，都是无可挑剔的学习对象。
+- WebSocket 建连阶段如何完成身份校验。
+- 如何管理 `userId`、`conversationId`、`generationId` 和 `session` 的关系。
+- 用户刷新页面后，如何恢复未完成的生成任务。
+- 如何处理中途停止生成。
+- 如何避免连接泄漏和内存 Map 并发问题。
 
-![派聪明的代码细节](https://cdn.tobebetterjavaer.com/paicoding/e946bb63f1fe5279888bb7f1fcb649b0.png)
+### 9.6 多租户权限过滤
 
-之前曾有球友问我：“二哥，你的星球怎么不定价 199、299、399 啊，我感觉星球提供的价值远超这个价格啊。”
+RAG 系统里的权限过滤必须发生在检索阶段，而不是回答展示阶段。如果无权文档已经被召回并送进大模型，即使最终不显示引用，也可能泄露敏感信息。
 
-答案很明确，我有自己的原则，**拒绝割韭菜，用心做内容，能帮一个是一个**。
+需要重点处理的问题包括：
 
-![我愿意给大家最真诚的服务](https://cdn.tobebetterjavaer.com/paicoding/e946bb63f1fe5279888bb7f1fcb649b0.png)
+- MySQL 查询和 ES 检索中如何保持同一套权限规则。
+- 公开文档、私有文档、组织文档的组合条件如何设计。
+- 组织标签如何缓存，变更后如何及时生效。
+- 如何防止普通用户调用管理员接口。
+- 如何避免 JWT 中角色或组织信息过期导致越权。
 
-不为别的，为的就是给所有人提供一个可持续的学习环境。当然了，随着人数的增多，二哥付出的精力越来越多，星球也会涨价，今天这批 30 元的优惠券不仅 2025 年最大的优惠力度，也是 2026 年最大的优惠力度，现在入手就是最划算的，再犹豫就只能等着涨价了。
+## 10. 项目亮点
 
-想想，QQ 音乐听歌连续包年需要 **88 元**，腾讯视频连续包年需要 **178 元**，腾讯体育包年 **233 元**。我相信，二哥编程星球回馈给你的，将是 10 倍甚至百倍的价值。
+这个项目比较值得拿出来讲的地方有这些：
 
-最后，希望小伙伴们，能紧跟我们的步伐！不要掉队。今年，和二哥一起翻身、一起逆袭、一起晋升、一起拿高薪 offer！
+- 有完整的 RAG 链路，从文档入库到 AI 问答形成闭环。
+- 用 Elasticsearch 同时做关键词检索和语义检索。
+- 支持大文件分片上传、断点续传和异步处理。
+- 用 Kafka 把耗时任务从用户请求里拆出去。
+- 用 MinIO 管理原始文件和预览文件。
+- 通过组织标签实现多租户和权限隔离。
+- 用 WebSocket 做流式 AI 聊天。
+- 包含用户、管理员、邀请码、充值、用量和限流等运营模块。
+- 支持模型供应商配置，方便接入不同大模型服务。
+- 技术栈覆盖 Java 后端、AI 工程化、搜索、缓存、消息队列、文件存储和前端工程。
 
-那无论你是社招还是校招，我们都希望你通过派聪明这个项目，能提升自己的简历含金量，拿到更好的 offer，也能更加从容的应对面试中各种 AI 相关的考察。
+如果放在简历或答辩里，我会重点讲三个关键词：完整链路、工程化、可优化。完整链路说明项目不是孤立功能；工程化说明它考虑了异步、权限、状态和成本；可优化说明这个项目还有继续生长的空间。
 
-冲。
+## 11. 后续可优化方向
+
+如果继续往生产化方向推进，可以优先考虑这些改进：
+
+- 增加统一任务调度与补偿中心，让异步任务更容易追踪和修复。
+- 设计更细的文档权限模型，例如团队、角色、单文档授权。
+- 优化检索排序策略，引入 rerank 模型提升召回质量。
+- 为知识库回答增加引用置信度和来源高亮。
+- 增加 OCR，支持扫描版 PDF 和图片文档。
+- 引入多模型降级策略，提高模型服务稳定性。
+- 增加审计日志，记录管理员操作和敏感数据访问。
+- 完善支付对账、退款和套餐变更。
+- 给高频接口增加指标监控、链路追踪和告警。
+- 对上传、解析、检索、聊天链路补充压力测试。
+
+从我的角度看，后续最值得做的是检索质量优化和异步任务治理。前者决定用户觉得 AI 是否真的“懂资料”，后者决定系统在文件量变大后还能不能稳定运行。一个负责“聪明”，一个负责“扛打”，这两个方向都很关键。
+
+## 12. 个人感想
+
+做 KnowFlow 最大的感受是：AI 项目表面上看是大模型，真正落地时拼的是系统工程能力。刚开始我以为重点是怎么调用模型，后来发现更难的是文件怎么进来、文本怎么切、索引怎么建、权限怎么管、失败怎么恢复、成本怎么控。大模型像站在舞台中央的主角，但后台的灯光、音响、调度、应急预案一个都不能少。
+
+这个项目也让我对 RAG 有了更现实的理解。RAG 不是把文档一股脑塞进去就能变聪明，它更像一条非常挑剔的生产线：解析差一点，切块乱一点，召回偏一点，权限漏一点，最后都会反映到回答质量上。尤其当模型用一种非常自信的语气输出错误答案时，那种感觉很震撼，仿佛系统在提醒我：别迷信智能，工程底座才是它的边界。
+
+当然，最爽的时刻也非常明显。当一个文档上传完成，系统成功解析、向量化、检索，然后模型能根据里面的内容回答问题时，我真的有一种把“死文档”点亮的感觉。原本只能靠 Ctrl+F 慢慢翻的资料，突然可以被自然语言召唤出来，这种体验非常像给知识库接上了一根神经。
+
+如果说这个项目带给我什么成长，我觉得是两点。第一，我更理解了后端工程的价值：不是接口能返回 200 就结束，而是要在复杂链路里保证状态清楚、边界明确、失败可恢复。第二，我更理解了 AI 工程化的价值：模型能力很强，但只有和搜索、权限、异步任务、存储、监控这些基础设施结合起来，才可能变成真正可用的产品。
+
+## 13. 简历描述示例
+
+可以把项目写成这样：
+
+> KnowFlow 是一个基于 Spring Boot 和 Vue 3 的企业级 RAG AI 知识库系统，支持文档分片上传、断点续传、Apache Tika 文档解析、Embedding 向量化、Elasticsearch 混合检索、WebSocket 流式问答、多租户组织权限、用户用量统计和充值管理。本人参与后端核心模块设计与实现，主要负责知识库文档处理、检索问答链路、权限控制、异步任务可靠性和系统性能优化。
+
+面试时可以按这个顺序展开：
+
+1. 先说明项目解决什么业务问题。
+2. 再讲 RAG 主链路如何工作。
+3. 然后介绍自己负责的模块。
+4. 接着挑一个技术难点展开，比如分片上传、混合检索、WebSocket 或异步任务一致性。
+5. 最后补充项目优化方向和个人收获。
+
+## 14. 总结
+
+KnowFlow 是一个综合性比较强的 Java 全栈 AI 项目。它既有用户登录、权限管理、文件上传、后台管理这些传统 Web 系统能力，也引入了 RAG、Embedding、向量检索和大模型流式调用。
+
+对我来说，这个项目的价值不只是“用了很多技术栈”，而是把很多真实业务里会遇到的问题串了起来：多组件协作、异步任务、权限隔离、最终一致性、成本控制，以及 AI 能力如何接进一个正常的业务系统。它让我更清楚地意识到，真正有含金量的项目不是功能列表堆得多，而是能讲清楚每个设计为什么存在、遇到什么问题、又是怎么一步步优化出来的。
