@@ -1,7 +1,7 @@
 # KnowFlow 项目介绍
 
 快速部署本项目支持本地源码部署：复制 .env.example 为 .env，修改 MySQL、Redis、MinIO、Elasticsearch、JWT 和模型 API 等配置；再启动 MySQL、Redis、MinIO、Elasticsearch 8.x、Kafka；最后分别启动 Spring Boot 后端和 Vue 前端。
-详细步骤见 https://github.com/aheng66/KnowFlow-RAG/blob/75b5950bc440186f7413403ac068eecabc8206bd/docs/deployment.md。
+详细步骤见 [docs/deployment.md](docs/deployment.md)。
 
 ## 1. 项目概述
 
