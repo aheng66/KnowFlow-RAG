@@ -1,5 +1,8 @@
 # KnowFlow 项目介绍
 
+快速部署本项目支持本地源码部署：复制 .env.example 为 .env，修改 MySQL、Redis、MinIO、Elasticsearch、JWT 和模型 API 等配置；再启动 MySQL、Redis、MinIO、Elasticsearch 8.x、Kafka；最后分别启动 Spring Boot 后端和 Vue 前端。
+详细步骤见 https://github.com/aheng66/KnowFlow-RAG/blob/75b5950bc440186f7413403ac068eecabc8206bd/docs/deployment.md。
+
 ## 1. 项目概述
 
 KnowFlow 是一个面向企业和个人资料管理的 AI 知识库系统。它解决的不是“做一个聊天框”这么简单的问题，而是把分散在 PDF、Word、TXT 和内部资料中的文档，整理成一个可检索、可问答、可按权限访问的知识库。
